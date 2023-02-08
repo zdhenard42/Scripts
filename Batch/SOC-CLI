@@ -1,0 +1,229 @@
+@echo off
+color 0A
+setlocal ENABLEDELAYEDEXPANSION
+set "case=NONE"
+set "remainder="
+for /f "tokens=1,2 delims=: " %%i in ("%DATE%") do set "date=%%j"
+for /f "tokens=1,2,3 delims=:/" %%a in ("%date%") do (
+set "month=%%a"
+set "day=%%b"
+set "year=%%c"
+)
+
+:main
+echo SOC Multitool
+echo Current Case:  %case% %remainder%
+echo:
+echo 1 - Display IP attributes
+echo 2 - KQL Toolbox
+echo 3 - Start a Case
+echo 4 - Finished Case
+choice /n /c:1234 /M "Choose an option (1-4) "
+GOTO LABEL-%ERRORLEVEL%
+
+:Label-1 attributes
+cls
+set /p "att=Enter/paste the IP: "
+curl -s https://ipapi.co/%att%/json/  | findstr "ip city region country_name postal asn org"
+pause
+cls
+goto main:
+
+:Label-2 KQL
+cls
+echo 1 - SigninLogs Query
+echo 2 - Identity Info Query
+echo 3 - Password information Query
+echo 4 - Mass Download alert by department
+echo 5 - Device Process Events Query
+echo 6 - Firewall block but Successful login
+echo 7 - Joined SE ^& DPE
+echo 8 - Search AuditLogs table
+echo 9 - Search all tables for a string
+choice /n /c:1234567890 /M "Choose an option (1-9) "
+GOTO KQL-%ERRORLEVEL%
+
+
+:Label-3 Case Started
+cls
+set /p case="Enter title of case: "
+set /p remainder=""
+echo %DATE% :: %TIME%: "%case% %remainder%" >> "%month%%day%%year%_Cases.txt"
+cls
+goto main:
+
+
+:Label-4 Case Closed
+echo Resolved %DATE% :: %TIME% >> "%month%%day%%year%_Cases.txt"
+echo: >> "%month%%day%%year%_Cases.txt"
+echo: >> "%month%%day%%year%_Cases.txt"
+echo Done!
+set "case=NONE"
+set "remainder="
+pause
+cls
+goto main:
+
+
+:KQL-1 Sign In Logs
+cls
+set /p upn="Enter the UPN of the user you want to search: "
+(
+echo SigninLogs
+
+echo ^^^| where UserPrincipalName contains "%upn%"
+
+echo ^^^| extend app ^= AppDisplayName^, ip ^= IPAddress^, Country^= parse^_json^^^(LocationDetails^^^)^^^.countryOrRegion^^^, State ^^^= parse^^^_json^^^(LocationDetails^^^)^^^.state^^^, City ^^^= parse^^^_json^^^(LocationDetails^^^)^^^.city^^^, auth ^^^= AuthenticationRequirement^^^, auth^^^_outcome ^^^= ConditionalAccessStatus^^^, device ^^^= DeviceDetail^^^, useragent ^^^= UserAgent^^^,  resource ^^^= ResourceDisplayName
+
+echo ^^^| project-away ResourceId, OperationVersion
+) | clip
+echo Copied to clipboard!
+pause
+cls
+goto main:
+
+
+:KQL-2 Identity Info Query
+cls
+set /p upn="Enter the UPN of the user you want to search: "
+(
+echo IdentityInfo 
+
+echo ^^^| where AccountUPN contains "%upn%" 
+
+echo ^^^| extend city ^^^= City^^^, state ^^^= State^^^, country ^^^= Country^^^, title = JobTitle^^^, dept ^^^= Department 
+) | clip
+echo Copied to clipboard!
+pause
+cls
+goto main:
+
+:KQL-3 Password information Query
+cls
+set /p upn="Enter the UPN of the user you want to search: "
+(
+echo let action ^^^= dynamic^^^([^^^"change^^^"^^^, ^^^"changed^^^"^^^, ^^^"reset^^^"]^^^); 
+
+echo let pWord = dynamic^^^([^^^"password^^^"^^^, ^^^"credentials^^^"]^^^); 
+
+echo AuditLogs 
+
+echo ^^^| where OperationName has_any ^^^(pWord^^^) and OperationName has^^^_any ^^^(action^^^) 
+
+echo ^^^| extend AccountType ^^^= tostring^^^(TargetResources^^^[0]^^^.type^^^)^^^, Account ^^^= tostring^^^(TargetResources[0]^^^.userPrincipalName^^^)^^^,TargetResourceName ^^^= tolower^^^(tostring^^^(TargetResources[0]^^^.displayName^^^)^^^)^^^, iniatatedby = tostring^^^(InitiatedBy^^^.user^^^.userPrincipalName^^^)
+
+echo ^^^| where Account contains "%upn%" 
+) | clip
+echo Copied to clipboard!
+pause
+cls
+goto main:
+
+:KQL-4 Mass Download alert by department
+cls
+set /p upn="Enter the department you want to search: "
+(
+echo SecurityAlert 
+
+echo ^^^| where AlertName contains "Mass download by a single user"
+
+echo ^^^| join kind=inner ^^^( 
+
+echo IdentityInfo 
+
+echo ^^^| where Department contains "%upn%" 
+
+echo ^^^| project AccountUPN ^^^= tolower^^^(AccountUPN^^^)^^^)
+
+echo on ^^^$left^^^.CompromisedEntity ^^^=^^^= ^^^$right^^^.AccountUPN 
+
+echo ^^^| project TimeGenerated^^^, AccountUPN 
+) | clip
+echo Copied to clipboard!
+pause
+cls
+goto main:
+
+:KQL-5 DeviceProcessEvents
+cls
+set /p upn="Enter the Hostname: "
+(
+
+echo let hostName ^^^= "%upn%";
+
+echo DeviceProcessEvents 
+
+echo ^^^| where DeviceName has hostName
+
+echo ^^^| extend GrandParentProcess ^^^= InitiatingProcessParentFileName^^^, InitiatingProcessCommandLine ^^^= InitiatingProcessCommandLine^^^, ProcessCommandLine ^^^= ProcessCommandLine^^^, InitiatingProcessId ^^^= InitiatingProcessId^^^, ProcessId ^^^= ProcessId
+) | clip
+echo Copied to clipboard!
+pause
+cls
+goto main:
+
+:KQL-6 Extend Network Info
+cls
+set /p vendor="Enter the vendor: "
+set /p dest="Enter the destination IP Address: "
+set /p src="Enter the source IP Address: "
+(
+echo CommonSecurityLog
+echo ^^^| where DeviceVendor ^^^=^^^~ "%vendor%"
+echo ^^^| where DeviceAction ^^^=^^^~ "denied"
+echo ^^^| where DestinationIP ^^^=^^^= "%dest%" or SourceIP ^^^=^^^= "%src%"
+) | clip
+echo Copied to clipboard!
+pause
+cls
+goto main:
+
+
+:KQL-7 SecurityEvents joined with DeviceProcessEvents
+cls
+set /p device="Enter the DeviceName: "
+set /p account="Enter the AccountName: "
+set /p computer="Enter the Computer Name: "
+(
+echo let SE ^^^= ^^^(SecurityEvent
+echo ^^^| where Computer contains "%computer%" and AccountName contains "%account%"
+echo ^^^| extend AccountCustomEntity ^^^= Account 
+echo ^^^| extend HostCustomEntity ^^^= Computer
+echo ^^^)^^^;
+echo let DPE ^^^= ^^^(DeviceProcessEvents
+echo ^^^| where DeviceName contains "%device%" and AccountName contains "%account%"
+echo ^^^| extend AccountCustomEntity ^^^= AccountName 
+echo ^^^| extend InitiatingProcessSHA256 ^^^= SHA256
+echo ^^^| extend HostCustomEntity ^^^= DeviceName
+echo ^^^)^^^;
+echo SE
+echo ^^^|union DPE
+) | clip
+echo Copied to clipboard!
+pause
+cls
+goto main:
+
+:KQL-8 Search AuditLogs
+cls
+set /p upn="Enter search term: "
+(
+echo auditlogs
+echo ^^^| search "%upn%"
+) | clip
+echo Copied to clipboard!
+pause
+cls
+goto main:
+
+:KQL-9 Search all tables for a string
+cls
+set /p upn="Enter the search term: "
+(
+echo search "%upn%"
+echo ^^^| summarize count^^^(^^^) by ^^^$table ^^^|sort by count^^^_
+) | clip
+echo Copied to clipboard!
+pause
+cls
+goto main:
